@@ -137,18 +137,18 @@ def write_metadata_and_missing_values(metadata, missing_values, output_file="def
         for column in metadata.get('StorageDescriptor', {}).get('Columns', []):
             name = column.get('Name')
             comment = column.get('Comment')
-            if comment is None or comment.strip() == "":
-                default_values[name] = ""
-            else:
+            if comment is not None and comment.strip() != "":
                 default_values[name] = comment
 
             if name in missing_values and (comment is None or comment.strip() == ""):
-                missing_columns[name] = "default comment missing"
+                missing_columns[name] = None
 
         # Add any missing columns with default comment missing to the 'missing_columns' section
-        for column in default_values:
-            if column not in missing_columns and default_values[column] == "":
-                missing_columns[column] = ""
+        for column in metadata.get('StorageDescriptor', {}).get('Columns', []):
+            name = column.get('Name')
+            comment = column.get('Comment')
+            if name not in missing_columns and (comment is None or comment.strip() == ""):
+                missing_columns[name] = None
 
         data = {
             "default_values": default_values,
@@ -162,9 +162,9 @@ def write_metadata_and_missing_values(metadata, missing_values, output_file="def
         print(f" ***** Error during metadata writing: {e}")
 
 
-def add_update_missing_values(glue_client, database_name, table_name, metadata):
+def add_update_and_inherit_properties(glue_client, database_name, table_name, metadata):
     """
-    Add or update missing column values in the table's metadata.
+    Add or update missing column comments and inherit other properties in AWS Glue table's metadata.
 
     Parameters:
         glue_client: Boto3 Glue client.
@@ -173,17 +173,24 @@ def add_update_missing_values(glue_client, database_name, table_name, metadata):
         metadata (dict): A dictionary containing the metadata.
 
     Returns:
-        dict: A dictionary containing the updated missing columns.
+        dict: A dictionary containing the updated missing columns and inherited properties.
     """
+    # Fetch the existing table metadata
+    response = glue_client.get_table(DatabaseName=database_name, Name=table_name)
+    existing_metadata = response['Table']
+
     # Get the columns with empty 'Comment' values
     missing_columns = {}
     for col in metadata['StorageDescriptor']['Columns']:
-        comment = col.get('Comment')
-        if comment is None or col['Comment'].strip() == "":
-            missing_columns[col['Name']] = ""
+        if col['Comment'] == '':
+            # Extract the existing comment from the current table metadata
+            for existing_col in existing_metadata['StorageDescriptor']['Columns']:
+                if existing_col['Name'] == col['Name']:
+                    missing_columns[col['Name']] = existing_col['Comment']
+                    break
 
     if not missing_columns:
-        print("***** No missing columns with empty 'Comment' found. *****")
+        print("No missing columns with empty 'Comment' found.")
         return {}
 
     # Update the missing columns with their new values from the external JSON file
@@ -199,18 +206,32 @@ def add_update_missing_values(glue_client, database_name, table_name, metadata):
             if col['Name'] == column:
                 col['Comment'] = new_comment
 
-    # Prepare the TableInput parameter with only the columns attribute to be updated
+    # Prepare the updated TableInput parameter with the new column values
+    updated_metadata = existing_metadata.copy()
+    updated_metadata['StorageDescriptor']['Columns'] = metadata['StorageDescriptor']['Columns']
+
+    # Remove attributes that should not be updated
+    updated_metadata.pop('CreateTime', None)
+    updated_metadata.pop('UpdateTime', None)
+    updated_metadata.pop('CreatedBy', None)
+    updated_metadata.pop('IsRegisteredWithLakeFormation', None)
+    updated_metadata.pop('CatalogId', None)
+    updated_metadata.pop('VersionId', None)
+    updated_metadata['StorageDescriptor'].pop('SchemaReference', None)  # Remove the SchemaReference
+
+    # Prepare the updated TableInput with only the valid parameters
     table_input = {
         'Name': table_name,
-        'StorageDescriptor': {
-            'Columns': metadata['StorageDescriptor']['Columns']
-        }
+        'Description': existing_metadata.get('Description', ''),
+        'TableType': existing_metadata.get('TableType', ''),
+        'Parameters': existing_metadata.get('Parameters', {}),
+        'StorageDescriptor': updated_metadata['StorageDescriptor']
     }
 
     # Update the table in Glue Data Catalog with the new column values
     glue_client.update_table(DatabaseName=database_name, TableInput=table_input)
 
-    print("********** Missing column values updated successfully! **********")
+    print("****** Missing column values and other properties updated successfully! ******")
     return metadata
 
 
@@ -233,8 +254,8 @@ def main():
         Comment below code block to list all the default values from  particular table mentioned in config file
         Run below code to add or update missing column comment values for particular table mentioned in config file
         """
-        update_table_metadata = add_update_missing_values(glue_client, database_name, table_name,
-                                                          default_table_metadata)
+        update_table_metadata = add_update_and_inherit_properties(glue_client, database_name, table_name,
+                                                                  default_table_metadata)
 
         write_metadata_and_missing_values(update_table_metadata, update_table_metadata.get('missing_columns', {}),
                                           output_file="updated_metadata.json")
