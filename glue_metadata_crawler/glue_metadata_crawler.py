@@ -182,11 +182,12 @@ def add_update_and_inherit_properties(glue_client, database_name, table_name, me
     # Get the columns with empty 'Comment' values
     missing_columns = {}
     for col in metadata['StorageDescriptor']['Columns']:
-        if col['Comment'] == '':
+        comment = col.get('Comment', '')
+        if comment == '':
             # Extract the existing comment from the current table metadata
             for existing_col in existing_metadata['StorageDescriptor']['Columns']:
                 if existing_col['Name'] == col['Name']:
-                    missing_columns[col['Name']] = existing_col['Comment']
+                    missing_columns[col['Name']] = existing_col.get('Comment', '')
                     break
 
     if not missing_columns:
