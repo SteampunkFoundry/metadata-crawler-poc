@@ -19,7 +19,7 @@ For checking missing table metadata follow below steps:
 
 1. First run the code by commenting below code in main(): function
 
-        update_table_metadata = add_update_missing_values(glue_client, database_name, table_name,
+        update_table_metadata = add_update_and_inherit_properties(glue_client, database_name, table_name,
                                                           default_table_metadata)
         write_metadata_and_missing_values(update_table_metadata, update_table_metadata.get('missing_columns', {}),
                                           output_file="updated_metadata.json")
@@ -49,7 +49,7 @@ For updating metadata for missing columns (comment section of the column) follow
                      
 3. Uncomment below code in main(): function and run code.
 
-        update_table_metadata = add_update_missing_values(glue_client, database_name, table_name,
+        update_table_metadata = add_update_and_inherit_properties(glue_client, database_name, table_name,
                                                           default_table_metadata)
         write_metadata_and_missing_values(update_table_metadata, update_table_metadata.get('missing_columns', {}),
                                           output_file="updated_metadata.json")
